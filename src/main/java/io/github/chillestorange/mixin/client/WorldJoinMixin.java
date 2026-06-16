@@ -1,0 +1,62 @@
+package io.github.chillestorange.mixin.client;
+
+import io.github.chillestorange.logging.WorldSyncLogger;
+import io.github.chillestorange.service.WorldSyncService;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.worldselection.WorldSelectionList;
+import net.minecraft.client.gui.screens.worldselection.WorldSelectionList.WorldListEntry;
+import net.minecraft.world.level.storage.LevelSummary;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.nio.file.Path;
+
+@Mixin(WorldListEntry.class)
+public class WorldJoinMixin {
+
+    @Shadow
+    @Final
+    private Minecraft minecraft;
+
+    @Shadow
+    @Final
+    private LevelSummary summary;
+
+    @Shadow
+    @Final
+    private WorldSelectionList list;
+
+    @Inject(method = "joinWorld", at = @At("HEAD"), cancellable = true)
+    private void worldsync$joinWorld(CallbackInfo ci) {
+        if (!WorldSyncService.targetWorld().equals(summary.getLevelName())) {
+            return;
+        }
+
+        ci.cancel();
+
+        String levelId = summary.getLevelId();
+
+        WorldSyncService.runSyncAsync("World join mixin thread", () -> {
+            var uuid = minecraft.getUser().getProfileId();
+
+            Path levelDatPath = minecraft.getLevelSource()
+                    .getLevelPath(levelId)
+                    .resolve("level.dat");
+
+            if (!WorldSyncService.updateSingleplayerUuid(levelDatPath, uuid)) {
+                WorldSyncLogger.error("Failed to update level.dat: path=" + levelDatPath);
+                return;
+            }
+
+            WorldSyncLogger.info("Updated level.dat: path=", levelDatPath);
+            WorldSyncLogger.info("Opening synced world: id=", levelId);
+
+            minecraft.execute(() ->
+                    minecraft.createWorldOpenFlows().openWorld(levelId, list::returnToScreen));
+        });
+    }
+}

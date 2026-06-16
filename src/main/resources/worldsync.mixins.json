@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "package": "io.github.chillestorange.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "client.WorldSaveMixin"
+  ],
+  "client": [
+    "client.WorldJoinMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}
