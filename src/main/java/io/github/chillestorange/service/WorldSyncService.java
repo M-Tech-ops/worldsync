@@ -8,10 +8,6 @@ import io.github.chillestorange.service.cloud.CloudStorageFactory.ProviderType;
 import io.github.chillestorange.service.cloud.CloudStorageProvider;
 import io.github.chillestorange.service.sync.*;
 import io.github.chillestorange.service.sync.SyncDiffEngine.FolderTask;
-import net.minecraft.core.UUIDUtil;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -19,7 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -177,23 +172,5 @@ public final class WorldSyncService {
 
         hashCache.save();
         WorldSyncLogger.info("Sync cycle complete");
-    }
-
-    public static boolean updateSingleplayerUuid(final Path levelDatPath, final UUID uuid) {
-        try {
-            CompoundTag root = NbtIo.readCompressed(levelDatPath, NbtAccounter.unlimitedHeap());
-            CompoundTag data = root.getCompound("Data").orElseThrow(() -> new IllegalStateException("Missing Data tag"));
-
-            data.storeNullable("singleplayer_uuid", UUIDUtil.CODEC, uuid);
-
-            NbtIo.writeCompressed(root, levelDatPath);
-
-            WorldSyncLogger.info("Updated singleplayer_uuid: path={}, uuid={}", levelDatPath, uuid);
-
-            return true;
-        } catch (Exception e) {
-            WorldSyncLogger.error("Failed to update singleplayer_uuid: path=" + levelDatPath, e);
-            return false;
-        }
     }
 }
