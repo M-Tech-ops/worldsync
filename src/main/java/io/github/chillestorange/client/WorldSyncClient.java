@@ -1,11 +1,19 @@
 package io.github.chillestorange.client;
 
+import io.github.chillestorange.config.WorldSyncConfig;
+import io.github.chillestorange.service.WorldSyncService;
 import net.fabricmc.api.ClientModInitializer;
 
 public final class WorldSyncClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        AutosaveSyncListener.register();
+        WorldSyncConfig.HANDLER.load();
+        WorldSyncService.initialize(
+                WorldSyncConfig.providerType(),
+                WorldSyncConfig.credentials(),
+                WorldSyncConfig.remoteFolderId(),
+                WorldSyncConfig.configDir()
+        );
     }
 }

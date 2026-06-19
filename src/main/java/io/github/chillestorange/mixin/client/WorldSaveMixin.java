@@ -3,12 +3,15 @@ package io.github.chillestorange.mixin.client;
 import io.github.chillestorange.config.WorldSyncConfig;
 import io.github.chillestorange.logging.WorldSyncLogger;
 import io.github.chillestorange.service.WorldSyncService;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.MinecraftServer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.nio.file.Path;
 
 @Mixin(MinecraftServer.class)
 public class WorldSaveMixin {
@@ -22,6 +25,10 @@ public class WorldSaveMixin {
         }
 
         String worldName = server.getWorldData().getLevelName();
+        Path worldPath = FabricLoader.getInstance()
+                .getGameDir()
+                .resolve("saves")
+                .resolve(worldName);
 
         if (!WorldSyncConfig.targetWorld().equals(worldName)) {
             return;
@@ -29,6 +36,6 @@ public class WorldSaveMixin {
 
         WorldSyncLogger.info("Target world detected, starting sync: world={}", worldName);
 
-        WorldSyncService.runSyncAsync("World save mixin thread");
+        WorldSyncService.runSyncCycle(worldPath);
     }
 }

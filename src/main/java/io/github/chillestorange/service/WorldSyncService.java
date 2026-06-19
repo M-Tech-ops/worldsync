@@ -1,66 +1,182 @@
 package io.github.chillestorange.service;
 
-import io.github.chillestorange.client.ui.ClientToastHandler;
-import io.github.chillestorange.config.WorldSyncConfig;
 import io.github.chillestorange.logging.WorldSyncLogger;
+import io.github.chillestorange.service.cloud.CloudItem;
+import io.github.chillestorange.service.cloud.CloudStorageFactory;
+import io.github.chillestorange.service.cloud.CloudStorageFactory.Credentials;
+import io.github.chillestorange.service.cloud.CloudStorageFactory.ProviderType;
+import io.github.chillestorange.service.cloud.CloudStorageProvider;
+import io.github.chillestorange.service.sync.*;
+import io.github.chillestorange.service.sync.SyncDiffEngine.FolderTask;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.IOException;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * This is the call site that replaces:
+ * <p>
+ * new ProcessBuilder(file_accesser.exe path...).start();
+ * <p>
+ * with:
+ * <p>
+ * WorldSyncService.initialize(...);          // once, at mod startup
+ * WorldSyncService.runSyncCycle(worldPath);   // every trigger after that
+ * <p>
+ * wired into your AutosaveSyncListener / WorldSaveMixin / WorldJoinMixin
+ * wherever the process used to get launched.
+ */
 public final class WorldSyncService {
 
-    private static final AtomicBoolean SYNC_IN_PROGRESS = new AtomicBoolean(false);
-    private static final long SYNC_TIMEOUT_MINUTES = 5;
+    // Replaces lock.py's PID-file lock entirely. That existed because
+    // file_accesser.exe could be launched as a brand-new OS process every
+    // cycle; here everything runs in one JVM, so a flag is enough to stop two
+    // sync cycles overlapping (e.g. an autosave-triggered sync racing a
+    // world-join-triggered one).
+    private static final AtomicBoolean SYNC_RUNNING = new AtomicBoolean(false);
+
+    private static final ExecutorService SYNC_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "worldsync-cycle");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static volatile CloudStorageProvider provider;
+    private static volatile HashCache hashCache;
+    private static volatile String remoteFolderId;
+    private static volatile Path configDir;
 
     private WorldSyncService() {
     }
 
-    private static Path syncExecutable() {
-        return WorldSyncConfig.syncExecutableDirectory().resolve("File_accesser.exe");
+    /**
+     * Call once at mod startup (e.g. from WorldSyncClient's initializer), not
+     * on every sync cycle. Building the provider, authenticator, and hash
+     * cache fresh every cycle was forced when this was a freshly-launched
+     * process each time; now that it's one long-lived JVM, doing that every
+     * cycle would just mean re-reading token/hash-cache JSON off disk and
+     * spinning up duplicate HttpClient instances for no reason.
+     */
+    public static void initialize(
+            ProviderType providerType, Credentials credentials, String remoteFolderId, Path configDir
+    ) {
+        HttpClient sharedHttpClient = HttpClient.newHttpClient();
+        provider = CloudStorageFactory.create(providerType, credentials, sharedHttpClient);
+        hashCache = new HashCache(configDir.resolve("sync_hash_cache.json"), provider::computeLocalFingerprint);
+        WorldSyncService.remoteFolderId = remoteFolderId;
+        WorldSyncService.configDir = configDir;
     }
 
-    public static void runSyncAsync(String threadName) {
-        runSyncAsync(threadName, () -> {
+    /**
+     * Runs one full sync cycle for the given world. Hops onto a background
+     * thread internally and never blocks the calling thread — safe to call
+     * directly from a mixin callback on the client thread.
+     */
+    public static CompletableFuture<Void> runSyncCycle(Path worldPath) {
+        return runSyncCycle(worldPath, () -> {
         });
     }
 
-    public static void runSyncAsync(String threadName, Runnable onSuccess) {
-        if (!SYNC_IN_PROGRESS.compareAndSet(false, true)) {
-            WorldSyncLogger.info("Already in progress, skipping request.");
+    public static CompletableFuture<Void> runSyncCycle(Path worldPath, Runnable onSuccess) {
+        if (provider == null) {
+            throw new IllegalStateException("WorldSyncService.initialize(...) must be called before runSyncCycle(...)");
+        }
+        if (!SYNC_RUNNING.compareAndSet(false, true)) {
+            WorldSyncLogger.info("Sync already running, skipping this trigger");
+            return CompletableFuture.completedFuture(null);
+        }
+
+        return CompletableFuture.runAsync(() -> {
+            try {
+                doSync(worldPath);
+                onSuccess.run();
+            } catch (Exception e) {
+                WorldSyncLogger.error("Sync cycle failed", e);
+            } finally {
+                SYNC_RUNNING.set(false);
+            }
+        }, SYNC_EXECUTOR);
+    }
+
+    private static void doSync(Path worldPath) throws IOException, InterruptedException {
+        // Check for level.dat specifically, not just the directory. On a world-join
+        // trigger, Minecraft creates the world directory before writing level.dat,
+        // so Files.exists(worldPath) can return true while level.dat doesn't exist
+        // yet — which caused a NoSuchFileException when the old check just tested
+        // the directory.
+        boolean firstRun = !Files.exists(worldPath.resolve("level.dat"));
+        SyncDirection direction;
+
+        if (firstRun) {
+            // The original had a real bug here: it called orchestrator.sync(direction="-1")
+            // with a comment saying "force download everything", but "-1" is the no-op
+            // direction in that codebase, so sync() returned immediately and first-time
+            // download never actually happened. Fixed here by setting DOWNLOAD directly.
+            WorldSyncLogger.info("World not found locally — downloading from cloud storage");
+            Files.createDirectories(worldPath);
+            direction = SyncDirection.DOWNLOAD;
+        } else {
+            Path remoteLevelDat = configDir.resolve("remote_files/level.dat");
+            CloudItem remoteLevelDatItem = provider.findByNameInFolder("level.dat", remoteFolderId)
+                    .orElseThrow(() -> new IOException("level.dat not found remotely in folder " + remoteFolderId));
+            provider.downloadFile(remoteLevelDatItem.id(), remoteLevelDat);
+
+            LevelSync.Summary local = LevelSync.read(worldPath.resolve("level.dat"));
+            LevelSync.Summary remote = LevelSync.read(remoteLevelDat);
+            direction = LevelSync.compare(local, remote);
+        }
+
+        if (direction == SyncDirection.NO_OP) {
+            WorldSyncLogger.info("Worlds already in sync, nothing to do");
             return;
         }
 
-        Thread.ofVirtual().name(threadName).start(() -> {
-            try {
-                ClientToastHandler.showSyncStarted();
-                WorldSyncLogger.info("Starting.");
+        WorldSyncLogger.info("Starting sync — direction: " + direction);
 
-                if (!synchronizeWorld()) {
-                    WorldSyncLogger.error("Failed.");
-                    ClientToastHandler.showMessage("Sync failed.");
-                    return;
-                }
+        Map<String, List<CloudItem>> tree = provider.fetchTree(remoteFolderId);
+        WorldSyncLogger.info("Remote tree fetched: " + tree.size() + " folders mapped");
 
-                ClientToastHandler.showSyncFinished();
-                WorldSyncLogger.info("Finished successfully.");
+        SyncDiffEngine diffEngine = new SyncDiffEngine();
+        SyncDiffEngine.Result diff = diffEngine.buildChangeset(
+                worldPath, remoteFolderId, tree, hashCache, direction);
 
-                onSuccess.run();
-            } catch (Exception e) {
-                WorldSyncLogger.error("Unexpected error.", e);
-                ClientToastHandler.showMessage("Sync error - check logs.");
-            } finally {
-                SYNC_IN_PROGRESS.set(false);
+        WorldSyncLogger.info(diff.toUpload().size() + " uploads, " + diff.toDownload().size()
+                + " downloads, " + diff.folderTasks().size() + " folder(s) to create");
+
+        // Folder creation happens synchronously here, before the transfer pool
+        // starts — two threads racing to create the same folder on either side
+        // causes intermittent errors.
+        for (FolderTask task : diff.folderTasks()) {
+            if (task instanceof FolderTask.CreateLocal(Path path)) {
+                Files.createDirectories(path);
+            } else if (task instanceof FolderTask.CreateRemote(Path localPath, String parentFolderId, String name)) {
+                String newFolderId = provider.createFolder(parentFolderId, name,
+                        Files.getLastModifiedTime(localPath).toInstant());
+
+                // The diff couldn't see inside this folder while building the
+                // changeset, since it didn't exist remotely yet. Now that it has a
+                // real id, walk its local contents directly so anything inside
+                // gets uploaded this same cycle instead of waiting one cycle late.
+                diffEngine.discoverNewLocalFolderContents(provider, localPath, newFolderId, diff.toUpload());
             }
-        });
+        }
+
+        new FileTransferManager(provider).runTransfers(diff.toUpload(), diff.toDownload());
+
+        hashCache.save();
+        WorldSyncLogger.info("Sync cycle complete");
     }
 
     public static boolean updateSingleplayerUuid(final Path levelDatPath, final UUID uuid) {
@@ -77,48 +193,6 @@ public final class WorldSyncService {
             return true;
         } catch (Exception e) {
             WorldSyncLogger.error("Failed to update singleplayer_uuid: path=" + levelDatPath, e);
-            return false;
-        }
-    }
-
-    public static boolean synchronizeWorld() {
-        Path executable = syncExecutable();
-        try {
-            if (!Files.isRegularFile(executable)) {
-                WorldSyncLogger.error("Executable not found: path=" + executable);
-                return false;
-            }
-
-            ProcessBuilder builder = new ProcessBuilder(executable.toString());
-            builder.directory(WorldSyncConfig.syncExecutableDirectory().toFile());
-            builder.redirectErrorStream(true);
-
-            WorldSyncLogger.info("Launching executable: path={}", executable);
-
-            Process process = builder.start();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    WorldSyncLogger.info("[EXE] " + line);
-                }
-            }
-
-            boolean finished = process.waitFor(SYNC_TIMEOUT_MINUTES, TimeUnit.MINUTES);
-
-            if (!finished) {
-                process.destroyForcibly();
-                WorldSyncLogger.error("Timed out after " + SYNC_TIMEOUT_MINUTES + " minutes, process killed.");
-                return false;
-            }
-
-            int exitCode = process.exitValue();
-            WorldSyncLogger.info("Executable exited: code={}", exitCode);
-
-            return exitCode == 0;
-
-        } catch (Exception e) {
-            WorldSyncLogger.error("Failed to launch executable.", e);
             return false;
         }
     }

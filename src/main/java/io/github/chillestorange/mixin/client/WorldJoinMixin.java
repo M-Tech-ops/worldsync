@@ -40,13 +40,12 @@ public class WorldJoinMixin {
         ci.cancel();
 
         String levelId = summary.getLevelId();
+        Path worldPath = minecraft.getLevelSource().getLevelPath(levelId);
 
-        WorldSyncService.runSyncAsync("World join mixin thread", () -> {
+        WorldSyncService.runSyncCycle(worldPath, () -> {
             var uuid = minecraft.getUser().getProfileId();
 
-            Path levelDatPath = minecraft.getLevelSource()
-                    .getLevelPath(levelId)
-                    .resolve("level.dat");
+            Path levelDatPath = worldPath.resolve("level.dat");
 
             if (!WorldSyncService.updateSingleplayerUuid(levelDatPath, uuid)) {
                 WorldSyncLogger.error("Failed to update level.dat: path=" + levelDatPath);

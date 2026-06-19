@@ -4,8 +4,11 @@ import io.github.chillestorange.config.WorldSyncConfig;
 import io.github.chillestorange.logging.WorldSyncLogger;
 import io.github.chillestorange.service.WorldSyncService;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.MinecraftServer;
+
+import java.nio.file.Path;
 
 public final class AutosaveSyncListener {
 
@@ -37,8 +40,13 @@ public final class AutosaveSyncListener {
             return;
         }
 
+        Path worldPath = FabricLoader.getInstance()
+                .getGameDir()
+                .resolve("saves")
+                .resolve(worldName);
+
         WorldSyncLogger.info("Detected autosave tick for target world, starting sync: world=", worldName);
 
-        WorldSyncService.runSyncAsync("World autosave thread");
+        WorldSyncService.runSyncCycle(worldPath);
     }
 }
