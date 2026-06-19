@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 public final class FileTransferManager {
 
     private static final int THREAD_THRESHOLD = 5;
-    private static final int MAX_WORKERS = 8;
+    private static final int MAX_WORKERS = 12;
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MILLIS = 1500;
 
