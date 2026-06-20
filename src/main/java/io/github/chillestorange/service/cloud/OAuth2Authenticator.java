@@ -66,6 +66,7 @@ public abstract class OAuth2Authenticator implements CloudAuthenticator {
         }
         if (refreshToken != null) {
             try {
+                WorldSyncLogger.debug("Refreshing access token...");
                 refreshAccessToken();
                 return accessToken;
             } catch (IOException e) {

@@ -1,5 +1,6 @@
 package io.github.chillestorange.service.sync;
 
+import io.github.chillestorange.logging.WorldSyncLogger;
 import io.github.chillestorange.service.cloud.CloudItem;
 import io.github.chillestorange.service.cloud.CloudStorageProvider;
 
@@ -8,12 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Replaces diff_engine.py. Walks the local world folder and the in-memory
@@ -28,34 +24,12 @@ import java.util.Set;
  */
 public final class SyncDiffEngine {
 
-    /** Folders that exist on one side but not the other and need creating. */
-    public sealed interface FolderTask {
-        record CreateLocal(Path localPath) implements FolderTask {}
-        record CreateRemote(Path localPath, String parentFolderId, String name) implements FolderTask {}
-    }
-
-    /** A single queued file transfer. remoteId is null for brand-new uploads. */
-    public record TransferTask(
-            Path localPath,
-            String remoteId,
-            String parentFolderId,
-            String name,
-            Instant remoteModifiedTime
-    ) {}
-
     private static final Set<String> IGNORED_FILES = Set.of("session.lock");
-
     // Skip files modified within this window — guards against racing a write
     // that's still in flight. Since sync is now triggered from WorldSaveMixin
     // *after* the save completes (rather than blind 4-5 minute polling), this
     // should rarely fire in practice, but it's kept as a defensive fallback.
     private static final long SKIP_IF_MODIFIED_WITHIN_MILLIS = 3000;
-
-    public record Result(
-            List<TransferTask> toUpload,
-            List<TransferTask> toDownload,
-            List<FolderTask> folderTasks
-    ) {}
 
     public Result buildChangeset(
             Path localRoot,
@@ -109,9 +83,11 @@ public final class SyncDiffEngine {
                 String remoteId = existsOnServer ? serverItem.id() : null;
 
                 if (!existsLocally && direction == SyncDirection.DOWNLOAD) {
+                    WorldSyncLogger.debug("Queueing local folder creation: {}", localFile);
                     folderTasks.add(new FolderTask.CreateLocal(localFile));
                 }
                 if (!existsOnServer && direction == SyncDirection.UPLOAD) {
+                    WorldSyncLogger.debug("Queueing remote folder creation: {}", localFile);
                     folderTasks.add(new FolderTask.CreateRemote(localFile, folderId, name));
                 }
 
@@ -127,6 +103,7 @@ public final class SyncDiffEngine {
             if (existsLocally) {
                 long ageMillis = System.currentTimeMillis() - Files.getLastModifiedTime(localFile).toMillis();
                 if (ageMillis < SKIP_IF_MODIFIED_WITHIN_MILLIS) {
+                    WorldSyncLogger.debug("Skipping mid-write file: {} (age {}ms)", localFile, ageMillis);
                     continue; // mid-write guard
                 }
             }
@@ -142,18 +119,24 @@ public final class SyncDiffEngine {
 
                 if (direction == SyncDirection.UPLOAD && localModified.isAfter(remoteModified)) {
                     if (contentLikelyChanged(localFile, relKey, serverItem, hashCache)) {
+                        WorldSyncLogger.debug("Queueing upload: {} (local={} remote={})", relKey, localModified, remoteModified);
                         toUpload.add(new TransferTask(localFile, serverItem.id(), folderId, name, null));
+                    } else {
+                        WorldSyncLogger.debug("Fingerprint match, skipping upload: {}", localFile);
                     }
                 } else if (direction == SyncDirection.DOWNLOAD && remoteModified.isAfter(localModified)) {
+                    WorldSyncLogger.debug("Queueing download: {} (local={} remote={})", relKey, localModified, remoteModified);
                     toDownload.add(new TransferTask(localFile, serverItem.id(), folderId, name, serverItem.modifiedTime()));
                 }
 
             } else if (existsLocally) {
                 if (direction == SyncDirection.UPLOAD) {
+                    WorldSyncLogger.debug("Queueing upload for local-only file: {} ", relKey);
                     toUpload.add(new TransferTask(localFile, null, folderId, name, null));
                 }
             } else { // existsOnServer only
                 if (direction == SyncDirection.DOWNLOAD) {
+                    WorldSyncLogger.debug("Queueing upload for remote-only file: {} ", relKey);
                     toDownload.add(new TransferTask(localFile, serverItem.id(), folderId, name, serverItem.modifiedTime()));
                 }
             }
@@ -189,6 +172,7 @@ public final class SyncDiffEngine {
             if (IGNORED_FILES.contains(name)) continue;
 
             if (Files.isDirectory(child)) {
+                WorldSyncLogger.debug("Creating remote subfolder: {}", child);
                 String newSubfolderId = provider.createFolder(remoteFolderId, name, Files.getLastModifiedTime(child).toInstant());
                 discoverNewLocalFolderContents(provider, child, newSubfolderId, toUpload);
             } else {
@@ -216,5 +200,35 @@ public final class SyncDiffEngine {
         }
         String localFingerprint = hashCache.getFingerprint(localFile, relKey);
         return !localFingerprint.equals(remoteFingerprint);
+    }
+
+    /**
+     * Folders that exist on one side but not the other and need creating.
+     */
+    public sealed interface FolderTask {
+        record CreateLocal(Path localPath) implements FolderTask {
+        }
+
+        record CreateRemote(Path localPath, String parentFolderId, String name) implements FolderTask {
+        }
+    }
+
+    /**
+     * A single queued file transfer. remoteId is null for brand-new uploads.
+     */
+    public record TransferTask(
+            Path localPath,
+            String remoteId,
+            String parentFolderId,
+            String name,
+            Instant remoteModifiedTime
+    ) {
+    }
+
+    public record Result(
+            List<TransferTask> toUpload,
+            List<TransferTask> toDownload,
+            List<FolderTask> folderTasks
+    ) {
     }
 }

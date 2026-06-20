@@ -68,6 +68,9 @@ public final class WorldSyncConfig {
     @SerialEntry(comment = "[ Advanced ] Delay between each retry (in ms).")
     public long retryDelay = 1500;
 
+    @SerialEntry(comment = "[ Advanced ] Enable debug mode.")
+    public boolean debugMode = false;
+
     // Accessors.
     public static String targetWorld() {
         return HANDLER.instance().targetWorld;
@@ -138,5 +141,9 @@ public final class WorldSyncConfig {
 
     public static long retryDelay() {
         return HANDLER.instance().retryDelay;
+    }
+
+    public static boolean debugMode() {
+        return HANDLER.instance().debugMode;
     }
 }

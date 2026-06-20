@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 @Mixin(WorldListEntry.class)
 public class WorldJoinMixin {
@@ -36,7 +37,9 @@ public class WorldJoinMixin {
 
     @Inject(method = "joinWorld", at = @At("HEAD"), cancellable = true)
     private void worldsync$joinWorld(CallbackInfo ci) {
-        if (!WorldSyncConfig.targetWorld().equals(summary.getLevelName())) {
+
+        String levelId = summary.getLevelId();
+        if (!WorldSyncConfig.targetWorld().equals(levelId)) {
             return;
         }
 
@@ -45,22 +48,18 @@ public class WorldJoinMixin {
         Screen  PreviousScreen = minecraft.screen;
         minecraft.setScreen(new SyncingScreen());
 
-        
-        String levelId = summary.getLevelId();
         Path worldPath = minecraft.getLevelSource().getLevelPath(levelId);
+        WorldSyncLogger.info("Starting join-triggered sync for world: {}", levelId);
 
         WorldSyncService.runSyncCycle(worldPath, () -> {
-            var uuid = minecraft.getUser().getProfileId();
+            UUID uuid = minecraft.getUser().getProfileId();
 
             Path levelDatPath = worldPath.resolve("level.dat");
 
             if (!WorldDataHelper.updateSingleplayerUuid(levelDatPath, uuid)) {
-                WorldSyncLogger.error("Failed to update level.dat: path=" + levelDatPath);
+                WorldSyncLogger.error("Failed to update level.dat — opening world anyway: " + levelDatPath);
                 return;
             }
-
-            WorldSyncLogger.info("Updated level.dat: path={}", levelDatPath);
-            WorldSyncLogger.info("Opening synced world: id={}", levelId);
 
             minecraft.execute(() ->
                     minecraft.createWorldOpenFlows().openWorld(levelId, list::returnToScreen));

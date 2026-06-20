@@ -5,6 +5,7 @@ import dev.isxander.yacl3.api.controller.BooleanControllerBuilder;
 import dev.isxander.yacl3.api.controller.EnumControllerBuilder;
 import dev.isxander.yacl3.api.controller.IntegerSliderControllerBuilder;
 import dev.isxander.yacl3.api.controller.StringControllerBuilder;
+import io.github.chillestorange.logging.WorldSyncLogger;
 import io.github.chillestorange.service.cloud.CloudStorageFactory.ProviderType;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -146,7 +147,7 @@ public class WorldSyncConfigScreen {
                 .build();
 
         OptionGroup performanceGroup = OptionGroup.createBuilder()
-                .name(Component.literal("Thread"))
+                .name(Component.literal("Performance"))
                 .option(threadThresholdOption)
                 .option(maxWorkersOption)
                 .build();
@@ -168,15 +169,32 @@ public class WorldSyncConfigScreen {
                 .build();
 
         OptionGroup reliabilityGroup = OptionGroup.createBuilder()
-                .name(Component.literal("Retries"))
+                .name(Component.literal("Reliability"))
                 .option(maxRetriesOption)
                 .option(retryDelayOption)
+                .build();
+
+        Option<Boolean> debugModeOption = Option.<Boolean>createBuilder()
+                .name(Component.literal("Debug Mode"))
+                .description(OptionDescription.of(Component.literal(
+                        "Verbose logging for troubleshooting.")))
+                .binding(false, () -> instance.debugMode, v -> {
+                    instance.debugMode = v;
+                    WorldSyncLogger.setDebugEnabled(v);
+                })
+                .controller(BooleanControllerBuilder::create)
+                .build();
+
+        OptionGroup debugGroup = OptionGroup.createBuilder()
+                .name(Component.literal("Debug"))
+                .option(debugModeOption)
                 .build();
 
         ConfigCategory advancedCategory = ConfigCategory.createBuilder()
                 .name(Component.literal("Advanced"))
                 .group(performanceGroup)
                 .group(reliabilityGroup)
+                .group(debugGroup)
                 .build();
 
         return YetAnotherConfigLib.createBuilder()

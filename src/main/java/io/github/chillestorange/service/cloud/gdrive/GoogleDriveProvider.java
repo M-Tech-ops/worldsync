@@ -3,6 +3,7 @@ package io.github.chillestorange.service.cloud.gdrive;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.chillestorange.logging.WorldSyncLogger;
 import io.github.chillestorange.service.cloud.CloudAuthenticator;
 import io.github.chillestorange.service.cloud.CloudItem;
 import io.github.chillestorange.service.cloud.CloudStorageProvider;
@@ -38,42 +39,50 @@ import java.util.UUID;
  */
 public final class GoogleDriveProvider implements CloudStorageProvider {
 
-    /**
-     * Supplies Google's specific OAuth2 endpoints/scope to the shared
-     * OAuth2Authenticator flow. See that class for the actual loopback-server,
-     * token storage, and refresh logic — nothing Drive-specific lives here.
-     * <p>
-     * Setup: create an OAuth Client ID of type "Desktop app" in Google Cloud
-     * Console (APIs & Services > Credentials) with the Drive API enabled.
-     * Loopback redirect URIs (http://127.0.0.1:&lt;any port&gt;) are allowed for
-     * Desktop app clients without pre-registering an exact port.
-     * <p>
-     * Caveat: while the consent screen is in "Testing" status, Google expires
-     * refresh tokens after 7 days regardless of activity. Toggle to "In
-     * production" (no verification required for personal/limited-use apps) to
-     * avoid weekly re-auth.
-     */
-    public static final class GoogleDriveAuthenticator extends OAuth2Authenticator {
-
-        private static final String AUTH_ENDPOINT  = "https://accounts.google.com/o/oauth2/v2/auth";
-        private static final String TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-        private static final String SCOPE          = "https://www.googleapis.com/auth/drive";
-
-        public GoogleDriveAuthenticator(String clientId, String clientSecret, Path tokenStorePath, HttpClient httpClient) {
-            super(AUTH_ENDPOINT, TOKEN_ENDPOINT, SCOPE, clientId, clientSecret, tokenStorePath, httpClient);
-        }
-    }
-
-    private static final String FILES_ENDPOINT  = "https://www.googleapis.com/drive/v3/files";
+    private static final String FILES_ENDPOINT = "https://www.googleapis.com/drive/v3/files";
     private static final String UPLOAD_ENDPOINT = "https://www.googleapis.com/upload/drive/v3/files";
     private static final String FOLDER_MIME = "application/vnd.google-apps.folder";
-
     private final CloudAuthenticator auth;
     private final HttpClient httpClient;
-
     public GoogleDriveProvider(CloudAuthenticator auth, HttpClient httpClient) {
         this.auth = auth;
         this.httpClient = httpClient;
+    }
+
+    /**
+     * A fixed boundary reused across every request risked, in principle, a
+     * binary file's content happening to contain that exact byte sequence and
+     * confusing Drive's multipart parser. Vanishingly unlikely in practice for
+     * Minecraft save data, but a random boundary per request costs nothing and
+     * removes the risk entirely.
+     */
+    private static String newBoundary() {
+        return "WorldSyncBoundary" + UUID.randomUUID();
+    }
+
+    private static CloudItem toCloudItem(JsonObject obj) {
+        List<String> parents = new ArrayList<>();
+        if (obj.has("parents")) {
+            for (var p : obj.getAsJsonArray("parents")) parents.add(p.getAsString());
+        }
+        Instant modified = obj.has("modifiedTime") ? Instant.parse(obj.get("modifiedTime").getAsString()) : Instant.EPOCH;
+        boolean isFolder = obj.has("mimeType") && FOLDER_MIME.equals(obj.get("mimeType").getAsString());
+        return new CloudItem(
+                obj.get("id").getAsString(),
+                obj.get("name").getAsString(),
+                isFolder,
+                modified,
+                obj.has("md5Checksum") ? obj.get("md5Checksum").getAsString() : "",
+                parents
+        );
+    }
+
+    private static String escapeQueryValue(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private static String enc(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     @Override
@@ -102,6 +111,8 @@ public final class GoogleDriveProvider implements CloudStorageProvider {
             // needs this loop or everything past the first page silently never syncs.
             pageToken = body.has("nextPageToken") ? body.get("nextPageToken").getAsString() : null;
         } while (pageToken != null);
+
+        if (WorldSyncLogger.isDebugEnabled()) WorldSyncLogger.debug("Fetched folder {} ({} children)", folderId, result.size());
 
         return result;
     }
@@ -251,17 +262,6 @@ public final class GoogleDriveProvider implements CloudStorageProvider {
         return response.get("id").getAsString();
     }
 
-    /**
-     * A fixed boundary reused across every request risked, in principle, a
-     * binary file's content happening to contain that exact byte sequence and
-     * confusing Drive's multipart parser. Vanishingly unlikely in practice for
-     * Minecraft save data, but a random boundary per request costs nothing and
-     * removes the risk entirely.
-     */
-    private static String newBoundary() {
-        return "WorldSyncBoundary" + UUID.randomUUID();
-    }
-
     private byte[] buildMultipartBody(JsonObject metadata, byte[] content, String boundary) {
         String head = "--" + boundary + "\r\n"
                 + "Content-Type: application/json; charset=UTF-8\r\n\r\n"
@@ -298,28 +298,29 @@ public final class GoogleDriveProvider implements CloudStorageProvider {
         return JsonParser.parseString(response.body()).getAsJsonObject();
     }
 
-    private static CloudItem toCloudItem(JsonObject obj) {
-        List<String> parents = new ArrayList<>();
-        if (obj.has("parents")) {
-            for (var p : obj.getAsJsonArray("parents")) parents.add(p.getAsString());
+    /**
+     * Supplies Google's specific OAuth2 endpoints/scope to the shared
+     * OAuth2Authenticator flow. See that class for the actual loopback-server,
+     * token storage, and refresh logic — nothing Drive-specific lives here.
+     * <p>
+     * Setup: create an OAuth Client ID of type "Desktop app" in Google Cloud
+     * Console (APIs & Services > Credentials) with the Drive API enabled.
+     * Loopback redirect URIs (http://127.0.0.1:&lt;any port&gt;) are allowed for
+     * Desktop app clients without pre-registering an exact port.
+     * <p>
+     * Caveat: while the consent screen is in "Testing" status, Google expires
+     * refresh tokens after 7 days regardless of activity. Toggle to "In
+     * production" (no verification required for personal/limited-use apps) to
+     * avoid weekly re-auth.
+     */
+    public static final class GoogleDriveAuthenticator extends OAuth2Authenticator {
+
+        private static final String AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+        private static final String TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+        private static final String SCOPE = "https://www.googleapis.com/auth/drive";
+
+        public GoogleDriveAuthenticator(String clientId, String clientSecret, Path tokenStorePath, HttpClient httpClient) {
+            super(AUTH_ENDPOINT, TOKEN_ENDPOINT, SCOPE, clientId, clientSecret, tokenStorePath, httpClient);
         }
-        Instant modified = obj.has("modifiedTime") ? Instant.parse(obj.get("modifiedTime").getAsString()) : Instant.EPOCH;
-        boolean isFolder = obj.has("mimeType") && FOLDER_MIME.equals(obj.get("mimeType").getAsString());
-        return new CloudItem(
-                obj.get("id").getAsString(),
-                obj.get("name").getAsString(),
-                isFolder,
-                modified,
-                obj.has("md5Checksum") ? obj.get("md5Checksum").getAsString() : "",
-                parents
-        );
-    }
-
-    private static String escapeQueryValue(String value) {
-        return value.replace("\\", "\\\\").replace("'", "\\'");
-    }
-
-    private static String enc(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 }

@@ -1,11 +1,14 @@
 package io.github.chillestorange.logging;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public final class WorldSyncLogger {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("worldsync");
+    private static final String LOGGER_NAME = "worldsync";
+    private static final Logger LOGGER = LoggerFactory.getLogger(LOGGER_NAME);
 
     private WorldSyncLogger() {
     }
@@ -29,4 +32,19 @@ public final class WorldSyncLogger {
     public static void debug(String msg) {
         LOGGER.debug(msg);
     }
+
+    public static void debug(String format, Object... args) {
+        LOGGER.debug(format, args);
+    }
+
+    // Helper functions
+    public static boolean isDebugEnabled() {
+        return LOGGER.isDebugEnabled();
+    }
+
+    public static void setDebugEnabled(boolean enabled) {
+        Configurator.setLevel(LOGGER_NAME, enabled ? Level.DEBUG : Level.INFO);
+        LOGGER.info("Debug logging {}", enabled ? "enabled" : "disabled");
+    }
+
 }

@@ -41,22 +41,20 @@ public final class WorldSyncService {
     // sync cycles overlapping (e.g. an autosave-triggered sync racing a
     // world-join-triggered one).
     private static final AtomicBoolean SYNC_RUNNING = new AtomicBoolean(false);
-    public static boolean isSyncing(){
-        return  SYNC_RUNNING.get();
-    }
-    
     private static final ExecutorService SYNC_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "worldsync-cycle");
         t.setDaemon(true);
         return t;
     });
-
     private static volatile CloudStorageProvider provider;
     private static volatile HashCache hashCache;
     private static volatile String remoteFolderId;
     private static volatile Path configDir;
-
     private WorldSyncService() {
+    }
+
+    public static boolean isSyncing() {
+        return SYNC_RUNNING.get();
     }
 
     /**
@@ -133,6 +131,9 @@ public final class WorldSyncService {
 
             LevelSync.Summary local = LevelSync.read(worldPath.resolve("level.dat"));
             LevelSync.Summary remote = LevelSync.read(remoteLevelDat);
+
+            WorldSyncLogger.debug("Level.dat comparison: local ticks={} remote ticks={}", local.time(), remote.time());
+
             direction = LevelSync.compare(local, remote);
         }
 
