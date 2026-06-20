@@ -41,7 +41,7 @@ public final class WorldSyncService {
     // sync cycles overlapping (e.g. an autosave-triggered sync racing a
     // world-join-triggered one).
     private static final AtomicBoolean SYNC_RUNNING = new AtomicBoolean(false);
-    public static boolean issyncing(){
+    public static boolean isSyncing(){
         return  SYNC_RUNNING.get();
     }
     
