@@ -212,7 +212,7 @@ public abstract class OAuth2Authenticator implements CloudAuthenticator {
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI.create(url));
         } else {
-            WorldSyncLogger.warn("Cannot open a browser automatically. Visit this URL manually: " + url);
+            WorldSyncLogger.debug("Cannot open a browser automatically. Visit this URL manually: {}", url);
             AuthEventBus.publish(new AuthEvent.BrowserUnavailable(url));
         }
     }

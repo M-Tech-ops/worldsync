@@ -14,10 +14,12 @@ public class SyncingScreen extends Screen {
     private static final String[] DOT_FRAMES = {".", "..", "..."};
     private static final long COPY_FEEDBACK_DURATION_MS = 2000L;
 
-    private static final Component LABEL_COPY = Component.literal("Copy URL to Clipboard");
+    private static final Component LABEL_COPY = Component.literal("Copy to Clipboard");
     private static final Component LABEL_COPIED = Component.literal("Copied!");
 
-    private static final int BUTTON_WIDTH = 200;
+    private static final int TITLE_SPACING = 8;
+
+    private static final int BUTTON_WIDTH = 150;
     private static final int BUTTON_HEIGHT = 20;
     private static final int BUTTON_GAP = 8;
 
@@ -98,6 +100,9 @@ public class SyncingScreen extends Screen {
         this.copyFeedbackUntilMs = System.currentTimeMillis() + COPY_FEEDBACK_DURATION_MS;
         this.copyButton.setMessage(LABEL_COPIED);
         // Button text reverts in tick() once the feedback duration expires.
+
+        // Reset focus for copy-to-clipboard button
+        this.minecraft.execute(this::clearFocus);
     }
 
     @Override
@@ -143,7 +148,7 @@ public class SyncingScreen extends Screen {
      */
     private int authBlockTopY() {
         int lineHeight = this.font.lineHeight + 2;
-        int textBlockHeight = lineHeight * 3; // title + 2 explanation lines
+        int textBlockHeight = lineHeight * 2; // title + 2 explanation lines
         int totalHeight = textBlockHeight + BUTTON_GAP + BUTTON_HEIGHT;
         return (this.height / 2) - totalHeight / 2;
     }
@@ -159,10 +164,10 @@ public class SyncingScreen extends Screen {
         // Explanation — slightly dimmed to create visual hierarchy below the title
         graphics.centeredText(this.font,
                 "A browser window could not be opened automatically.",
-                centerX, topY + lineHeight, 0xFFAAAAAA);
-        graphics.centeredText(this.font,
-                "Copy the URL below and paste it into your browser:",
-                centerX, topY + lineHeight * 2, 0xFFAAAAAA);
+                centerX, topY + lineHeight + TITLE_SPACING, 0xFFAAAAAA);
+//        graphics.centeredText(this.font,
+//                "Copy the URL below and paste it into your browser:",
+//                centerX, topY + lineHeight * 2, 0xFFAAAAAA);
 
         // Copy button is rendered by the widget system via addRenderableWidget —
         // no manual draw call needed here. Its Y position is derived from the
