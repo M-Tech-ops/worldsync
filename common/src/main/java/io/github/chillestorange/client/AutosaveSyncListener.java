@@ -2,9 +2,8 @@ package io.github.chillestorange.client;
 
 import io.github.chillestorange.config.WorldSyncConfig;
 import io.github.chillestorange.logging.WorldSyncLogger;
+import io.github.chillestorange.platform.PlatformServices;
 import io.github.chillestorange.service.WorldSyncService;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.MinecraftServer;
 
@@ -16,7 +15,7 @@ public final class AutosaveSyncListener {
     }
 
     public static void register() {
-        ServerTickEvents.END_SERVER_TICK.register(AutosaveSyncListener::onServerTick);
+        PlatformServices.EVENTS.registerServerTickEnd(AutosaveSyncListener::onServerTick);
     }
 
     private static void onServerTick(MinecraftServer server) {
@@ -40,8 +39,7 @@ public final class AutosaveSyncListener {
             return;
         }
 
-        Path worldPath = FabricLoader.getInstance()
-                .getGameDir()
+        Path worldPath = PlatformServices.PLATFORM.getGameDirectory()
                 .resolve("saves")
                 .resolve(worldName);
 

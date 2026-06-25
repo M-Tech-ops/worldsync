@@ -1,15 +1,18 @@
 package io.github.chillestorange.platform;
 
 import io.github.chillestorange.logging.WorldSyncLogger;
+import io.github.chillestorange.platform.services.IPlatformEvents;
 import io.github.chillestorange.platform.services.IPlatformHelper;
 
 import java.util.ServiceLoader;
 
-public final class Services {
+public final class PlatformServices {
 
     public static final IPlatformHelper PLATFORM = load(IPlatformHelper.class);
 
-    private Services() {
+    public static final IPlatformEvents EVENTS = load(IPlatformEvents.class);
+
+    private PlatformServices() {
     }
 
     private static <T> T load(Class<T> serviceClass) {

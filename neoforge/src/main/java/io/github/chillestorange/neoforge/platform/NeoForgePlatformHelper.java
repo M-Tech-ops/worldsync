@@ -14,6 +14,11 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
     }
 
     @Override
+    public Path getGameDirectory() {
+        return FMLPaths.GAMEDIR.get();
+    }
+
+    @Override
     public Path getConfigDirectory() {
         return FMLPaths.CONFIGDIR.get();
     }

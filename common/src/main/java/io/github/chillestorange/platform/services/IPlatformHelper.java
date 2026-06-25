@@ -6,5 +6,7 @@ public interface IPlatformHelper {
 
     ModPlatform getPlatform();
 
+    Path getGameDirectory();
+
     Path getConfigDirectory();
 }
