@@ -5,6 +5,7 @@ plugins {
 dependencies {
     minecraft libs.minecraft
     compileOnly libs.fabric.loader
+    compileOnly libs.yacl.fabric
 }
 
 // Common is an implementation detail and produces no distributable artifacts.
