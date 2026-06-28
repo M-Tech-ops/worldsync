@@ -20,6 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.UUID;
 
 @Mixin(WorldListEntry.class)
 public class WorldJoinMixin {
@@ -54,7 +55,7 @@ public class WorldJoinMixin {
         // TODO: Add functionality to cancel sync and return to world selection menu.
         minecraft.setScreen(new SyncingScreen());
 
-        var worldPath = minecraft.getLevelSource().getLevelPath(levelId);
+        Path worldPath = minecraft.getLevelSource().getLevelPath(levelId);
         GameSyncLogger.info("Starting join-triggered sync for world {}", levelId);
 
         GameSyncService.runSyncCycle(
@@ -66,8 +67,8 @@ public class WorldJoinMixin {
 
     @Unique
     private void gamesync$onSyncComplete(String levelId, Path worldPath) {
-        var uuid = minecraft.getUser().getProfileId();
-        var levelDatPath = worldPath.resolve(LEVEL_DAT);
+        UUID uuid = minecraft.getUser().getProfileId();
+        Path levelDatPath = worldPath.resolve(LEVEL_DAT);
 
         // Exceptions intentionally limited to those documented by
         // WorldDataHelper.updateSingleplayerUuid().
@@ -77,8 +78,6 @@ public class WorldJoinMixin {
         } catch (IOException | IllegalStateException e) {
             GameSyncLogger.error("Failed to update singleplayer_uuid in {}. Opening world anyway", levelDatPath, e);
         }
-
-        // TODO: Optionally add a feature to display sync completed on syncing screen (for UX)
 
         minecraft.execute(() ->
                 minecraft.createWorldOpenFlows().openWorld(levelId, list::returnToScreen));

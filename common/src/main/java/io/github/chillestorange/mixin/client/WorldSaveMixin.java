@@ -18,6 +18,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.nio.file.Path;
+
 @Mixin(MinecraftServer.class)
 public class WorldSaveMixin {
 
@@ -38,11 +40,11 @@ public class WorldSaveMixin {
             return;
         }
 
-        var worldPath = storageSource.getLevelPath(LevelResource.ROOT);
+        Path worldPath = storageSource.getLevelPath(LevelResource.ROOT);
 
         GameSyncLogger.info("Target world closed, starting upload sync for world {}", levelId);
 
-        var minecraft = Minecraft.getInstance();
+        Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> minecraft.setScreen(new SyncingScreen()));
 
         GameSyncService.runSyncCycle(
