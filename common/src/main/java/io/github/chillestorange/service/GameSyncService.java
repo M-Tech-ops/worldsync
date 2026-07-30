@@ -6,12 +6,9 @@ import io.github.chillestorange.service.cloud.CloudStorageFactory;
 import io.github.chillestorange.service.cloud.CloudStorageFactory.Credentials;
 import io.github.chillestorange.service.cloud.CloudStorageFactory.ProviderType;
 import io.github.chillestorange.service.cloud.CloudStorageProvider;
-import io.github.chillestorange.service.sync.FileTransferManager;
-import io.github.chillestorange.service.sync.HashCache;
-import io.github.chillestorange.service.sync.LevelSync;
-import io.github.chillestorange.service.sync.SyncDiffEngine;
-import io.github.chillestorange.service.sync.SyncDirection;
+import io.github.chillestorange.service.sync.*;
 import io.github.chillestorange.service.sync.SyncDiffEngine.FolderTask;
+import io.github.chillestorange.util.FormatUtils;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -140,17 +137,27 @@ public final class GameSyncService {
             Files.createDirectories(worldPath);
             direction = SyncDirection.DOWNLOAD;
         } else {
-            Path remoteLevelDat = configDir.resolve(REMOTE_LEVEL_DAT);
-            CloudItem remoteLevelDatItem = provider.findByNameInFolder(LEVEL_DAT, remoteFolderId)
-                    .orElseThrow(() -> new IOException("level.dat not found remotely in folder " + remoteFolderId));
-            provider.downloadFile(remoteLevelDatItem.id(), remoteLevelDat);
+            CloudItem remoteLevelDatItem = provider.findByNameInFolder(LEVEL_DAT, remoteFolderId).orElse(null);
 
-            LevelSync.Summary local = LevelSync.read(worldPath.resolve(LEVEL_DAT));
-            LevelSync.Summary remote = LevelSync.read(remoteLevelDat);
+            if (remoteLevelDatItem == null) {
+                // Local world exists but the remote has nothing yet (new/empty
+                // remote folder, or level.dat missing there for any other reason).
+                // There's no remote level.dat to compare against, so there's
+                // nothing to base a direction decision on — force a full upload
+                // rather than failing the cycle.
+                GameSyncLogger.info("level.dat not found remotely, forcing upload of local world");
+                direction = SyncDirection.UPLOAD;
+            } else {
+                Path remoteLevelDat = configDir.resolve(REMOTE_LEVEL_DAT);
+                provider.downloadFile(remoteLevelDatItem.id(), remoteLevelDat);
 
-            GameSyncLogger.debug("Level.dat comparison: local ticks={} remote ticks={}", local.time(), remote.time());
+                LevelSync.Summary local = LevelSync.read(worldPath.resolve(LEVEL_DAT));
+                LevelSync.Summary remote = LevelSync.read(remoteLevelDat);
 
-            direction = LevelSync.compare(local, remote);
+                GameSyncLogger.debug("Level.dat comparison: local ticks={} remote ticks={}", local.time(), remote.time());
+
+                direction = LevelSync.compare(local, remote);
+            }
         }
 
         if (direction == SyncDirection.NO_OP) {
@@ -167,8 +174,9 @@ public final class GameSyncService {
         SyncDiffEngine.Result diff = diffEngine.buildChangeset(
                 worldPath, remoteFolderId, tree, hashCache, direction);
 
-        GameSyncLogger.info("{} uploads, {} downloads, {} folder(s) to create",
-                diff.toUpload().size(), diff.toDownload().size(), diff.folderTasks().size());
+        GameSyncLogger.info("{} uploads, {} downloads, {} folder(s) to create. Total size: {}",
+                diff.toUpload().size(), diff.toDownload().size(),
+                diff.folderTasks().size(), FormatUtils.formatBytes(diff.totalBytes()));
 
         // Folder creation happens synchronously here, before the transfer pool
         // starts — two threads racing to create the same folder on either side
